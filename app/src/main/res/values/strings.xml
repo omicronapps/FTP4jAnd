@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">FTPLoader</string>
+    <string name="server_title">Server:</string>
+    <string name="port_title">Port:</string>
+    <string name="default_port">21</string>
+    <string name="user_name">User:</string>
+    <string name="password_title">Password:</string>
+    <string name="connect_text">Connect</string>
+    <string name="disconnect_text">Disconnect</string>
+    <string name="login_text">Login</string>
+    <string name="logout_text">Logout</string>
+    <string name="remote_description">Remote files</string>
+    <string name="remote_title">Remote path:</string>
+    <string name="local_description">Local files</string>
+    <string name="local_title">Local path:</string>
+    <string name="status_title">Status:</string>
+</resources>
