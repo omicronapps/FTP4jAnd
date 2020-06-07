@@ -10,9 +10,9 @@ import android.os.IBinder;
 import android.os.Message;
 import android.os.Messenger;
 import android.os.RemoteException;
-import android.support.test.InstrumentationRegistry;
-import android.support.test.rule.ServiceTestRule;
-import android.support.test.runner.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.rule.ServiceTestRule;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import android.util.Log;
 
 import org.junit.After;
@@ -190,7 +190,7 @@ public class FTPServiceTest {
 
     @BeforeClass
     public static void startService() throws TimeoutException {
-        Intent intent = new Intent(InstrumentationRegistry.getTargetContext(), FTPService.class);
+        Intent intent = new Intent(InstrumentationRegistry.getInstrumentation().getTargetContext(), FTPService.class);
         TestConnection connection = new TestConnection();
         IBinder binder = mServiceRule.bindService(intent, connection, Context.BIND_AUTO_CREATE);
         assertNotEquals("IBinder", binder, null);
@@ -440,7 +440,7 @@ public class FTPServiceTest {
         changeDirectory(TEST_ANONYMOUS_FOLDER);
         changeDirectory(TEST_ANONYMOUS_SUBFOLDER);
 
-        String localPath = InstrumentationRegistry.getTargetContext().getFilesDir().getAbsolutePath();
+        String localPath = InstrumentationRegistry.getInstrumentation().getTargetContext().getFilesDir().getAbsolutePath();
         String localFileName = localPath + "/" + TEST_REMOTE;
         download(TEST_REMOTE, localFileName);
         abortCurrentDataTransfer();

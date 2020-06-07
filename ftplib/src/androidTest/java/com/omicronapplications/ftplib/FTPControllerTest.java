@@ -1,7 +1,7 @@
 package com.omicronapplications.ftplib;
 
-import android.support.test.InstrumentationRegistry;
-import android.support.test.runner.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import android.util.Log;
 
 import org.junit.Before;
@@ -176,7 +176,7 @@ public class FTPControllerTest {
     }
 
     private void start() {
-        mController = new FTPController(InstrumentationRegistry.getTargetContext());
+        mController = new FTPController(InstrumentationRegistry.getInstrumentation().getTargetContext());
         mController.setCallbacks(mCallback, mDownload);
         mMessageLatch = new CountDownLatch(1);
         assertTrue("start", mController.start());
@@ -427,7 +427,7 @@ public class FTPControllerTest {
         changeDirectory(TEST_ANONYMOUS_FOLDER);
         changeDirectory(TEST_ANONYMOUS_SUBFOLDER);
 
-        String localPath = InstrumentationRegistry.getTargetContext().getFilesDir().getAbsolutePath();
+        String localPath = InstrumentationRegistry.getInstrumentation().getTargetContext().getFilesDir().getAbsolutePath();
         String localFileName = localPath + "/" + TEST_REMOTE;
         download(TEST_REMOTE, localFileName);
         abortCurrentDataTransfer();
