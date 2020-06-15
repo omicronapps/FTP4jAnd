@@ -170,6 +170,11 @@ public class FTPActivity extends Activity implements FTPAdapter.IAdapterCallback
         public void failed() {
             Toast.makeText(getApplicationContext(), "failed", Toast.LENGTH_SHORT).show();
         }
+
+        @Override
+        public void queue(int size) {
+            Toast.makeText(getApplicationContext(), "queue: " + size, Toast.LENGTH_SHORT).show();
+        }
     }
 
     @Override

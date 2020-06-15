@@ -158,6 +158,9 @@ public class FTPControllerTest {
         public void failed() {
             mDownloadFailed = true;
         }
+
+        @Override
+        public void queue(int size) {}
     }
 
     @Before

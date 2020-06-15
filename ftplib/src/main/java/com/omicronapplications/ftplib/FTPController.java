@@ -26,6 +26,7 @@ public class FTPController {
     private FTPConnection mConnection;
     private Messenger mLocalMessenger;
     private Messenger mRemoteMessenger;
+    private Handler mRemoteHandler;
     private FTPState mState;
 
     public enum FTPState {
@@ -60,6 +61,7 @@ public class FTPController {
         void completed();
         void aborted();
         void failed();
+        void queue(int size);
     }
 
     /*
@@ -440,6 +442,9 @@ public class FTPController {
                 case FTPService.WHAT_DOWNLOAD_ABORTED:
                     download.aborted();
                     break;
+                case FTPService.WHAT_DOWNLOAD_QUEUE:
+                    download.queue(msg.arg2);
+                    break;
                 default:
                     Log.w(TAG, "handleDownload: unsupported command:" + msg.what);
             }
@@ -474,17 +479,13 @@ public class FTPController {
             }
             mReplyHandler = new FTPControllerHandler(controller);
             controller.mLocalMessenger = new Messenger(mReplyHandler);
-            controller.mRemoteMessenger = new Messenger(service);
+            controller.mRemoteHandler = ((FTPService.PlayerBinder)service).getHandler();
             Message message = Message.obtain();
             message.what = FTPService.WHAT_START;
             message.replyTo = controller.mLocalMessenger;
-            try {
-                controller.mRemoteMessenger.send(message);
-            } catch (RemoteException e) {
-                Log.e(TAG, "onServiceConnected: failed to send message");
-            }
+            controller.mRemoteHandler.sendMessage(message);
             controller.setState(FTPState.SERVICE_STARTED);
-        }
+       }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
@@ -511,7 +512,7 @@ public class FTPController {
     }
 
     private boolean sendCommand(int what, int arg1, int arg2, String ... keyvals) {
-        if (mRemoteMessenger == null) {
+        if (mRemoteHandler == null) {
             Log.w(TAG, "sendCommand: no message handler");
             return false;
         }
@@ -531,10 +532,8 @@ public class FTPController {
         if (!data.isEmpty()) {
             message.setData(data);
         }
-        try {
-            mRemoteMessenger.send(message);
-        } catch (RemoteException e) {
-            Log.e(TAG , "sendCommand: failed to send message");
+        if (!mRemoteHandler.sendMessage(message)) {
+            Log.w(TAG, "sendCommand: failed to send message");
             return false;
         }
         return true;

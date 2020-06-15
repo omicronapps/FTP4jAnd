@@ -191,6 +191,7 @@ Copyright (C) 2019-2020 [Fredrik Claesson](https://github.com/omicronapps)
 
 - 1.0.0 Initial release
 - 1.1.0 Migrated to AndroidX
+- 1.2.0 FTP service refactored, support for multiple download requests
 
 ## License
 

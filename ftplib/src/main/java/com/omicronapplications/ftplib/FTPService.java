@@ -2,6 +2,8 @@ package com.omicronapplications.ftplib;
 
 import android.app.Service;
 import android.content.Intent;
+import android.os.Binder;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -15,10 +17,12 @@ import android.util.Log;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 import it.sauronsoftware.ftp4j.FTPAbortedException;
 import it.sauronsoftware.ftp4j.FTPClient;
 import it.sauronsoftware.ftp4j.FTPDataTransferException;
+import it.sauronsoftware.ftp4j.FTPDataTransferListener;
 import it.sauronsoftware.ftp4j.FTPException;
 import it.sauronsoftware.ftp4j.FTPFile;
 import it.sauronsoftware.ftp4j.FTPIllegalReplyException;
@@ -47,6 +51,7 @@ public class FTPService extends Service {
     public static final int WHAT_DOWNLOAD_COMPLETED = 103;
     public static final int WHAT_DOWNLOAD_ABORTED = 104;
     public static final int WHAT_DOWNLOAD_FAILED = 105;
+    public static final int WHAT_DOWNLOAD_QUEUE = 106;
     // Arguments, return values
     public static final String KEY_HOST = "com.omicronapplications.ftplib.key.HOST";
     public static final String KEY_USERNAME = "com.omicronapplications.ftplib.key.USERNAME";
@@ -69,112 +74,212 @@ public class FTPService extends Service {
     public static final int EXCEPTION_FTP_DATA_TRANSFER = -7;
     public static final int EXCEPTION_FTP_ABORTED = -8;
     public static final int EXCEPTION_FTP_LIST_PARSE = -9;
-
-    private HandlerThread mThread;
-    private FTPServiceHandler mReplyHandler;
-    private FTPTransferListener mTransferListener;
-    private Messenger mLocalMessenger;
+    private final IBinder mBinder = new PlayerBinder();
+    private HandlerThread mMessageThread;
+    private MessageCallback mMessageCallback;
+    private Handler mMessageHandler;
+    private HandlerThread mDownloadThread;
+    private DownloadRunner mDownloadRunner;
+    private Handler mDownloadHandler;
     private Messenger mRemoteMessenger;
-    private FTPClient mClient;
+    private FTPTransferListener mTransferListener;
+    // DownloadRunner/MessageCallback variables
+    private final FTPClient mClient = new FTPClient();
+    private ConcurrentLinkedQueue<DownloadElement> mDownloadQueue = new ConcurrentLinkedQueue<>();
 
-    private class FTPTransferListener implements it.sauronsoftware.ftp4j.FTPDataTransferListener {
-        @Override
-        public void started() {
-            Message msg = Message.obtain();
-            msg.what = WHAT_DOWNLOAD_STARTED;
-            mReplyHandler.sendReply(msg.what);
-        }
-
-        @Override
-        public void transferred(int length) {
-            Message msg = Message.obtain();
-            msg.what = WHAT_DOWNLOAD_TRANSFERRED;
-            mReplyHandler.sendReply(msg.what, EXCEPTION_OK, length);
-        }
-
-        @Override
-        public void completed() {
-            Message msg = Message.obtain();
-            msg.what = WHAT_DOWNLOAD_COMPLETED;
-            mReplyHandler.sendReply(msg.what);
-        }
-
-        @Override
-        public void aborted() {
-            Message msg = Message.obtain();
-            msg.what = WHAT_DOWNLOAD_ABORTED;
-            mReplyHandler.sendReply(msg.what);
-        }
-
-        @Override
-        public void failed() {
-            Message msg = Message.obtain();
-            msg.what = WHAT_DOWNLOAD_FAILED;
-            mReplyHandler.sendReply(msg.what);
+    public final class PlayerBinder extends Binder {
+        Handler getHandler() {
+            return mMessageHandler;
         }
     }
 
-    private final class FTPServiceHandler extends Handler {
-        private FTPServiceHandler(Looper looper) {
-            super(looper);
+    @Override
+    public void onCreate() {
+        mMessageThread = new HandlerThread("FTPHandler", Process.THREAD_PRIORITY_BACKGROUND);
+        try {
+            mMessageThread.start();
+        } catch (IllegalThreadStateException e) {
+            Log.w(TAG, "onCreate: IllegalThreadStateException: " + e.getMessage());
         }
+        mMessageCallback = new MessageCallback();
+        Looper looper = mMessageThread.getLooper();
+        mMessageHandler = new Handler(looper, mMessageCallback);
 
+        mDownloadThread = new HandlerThread("FTPClient", Process.THREAD_PRIORITY_BACKGROUND);
+        try {
+            mDownloadThread.start();
+        } catch (IllegalThreadStateException e) {
+            Log.w(TAG, "onCreate: IllegalThreadStateException: " + e.getMessage());
+        }
+        mDownloadRunner = new DownloadRunner();
+        looper = mDownloadThread.getLooper();
+        mDownloadHandler = new Handler(looper);
+
+        mTransferListener = new FTPTransferListener();
+        mDownloadQueue.clear();
+    }
+
+    @Override
+    public void onDestroy() {
+        if (mMessageHandler != null) {
+            mMessageHandler.removeCallbacksAndMessages(null);
+        }
+        if (mMessageThread != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                mMessageThread.quitSafely();
+            } else {
+                mMessageThread.quit();
+            }
+        }
+        mMessageThread = null;
+        mMessageCallback = null;
+        mMessageHandler = null;
+
+        if (mDownloadHandler != null) {
+            mDownloadHandler.removeCallbacksAndMessages(null);
+        }
+        if (mDownloadThread != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                mDownloadThread.quitSafely();
+            } else {
+                mDownloadThread.quit();
+            }
+        }
+        mDownloadThread = null;
+        mDownloadRunner = null;
+        mDownloadHandler = null;
+
+        mTransferListener = null;
+        mDownloadQueue.clear();
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return mBinder;
+    }
+
+    @Override
+    public boolean onUnbind(Intent intent) {
+        return false;
+    }
+
+    private final class DownloadRunner implements Runnable {
         @Override
-        public void handleMessage(Message msg) {
-            if (mClient == null) {
-                Log.w(TAG, "handleMessage: no FTP client");
+        public void run() {
+            DownloadElement element = mDownloadQueue.poll();
+            if (element == null) {
+                Log.w(TAG, "download: no file enqueued for download");
+                if (mTransferListener != null) {
+                    mTransferListener.failed();
+                }
+                if (mMessageCallback != null) {
+                    mMessageCallback.sendReply(WHAT_DOWNLOAD_QUEUE, EXCEPTION_UNKNOWN, mDownloadQueue.size());
+                }
                 return;
             }
+            int result = EXCEPTION_OK;
+            String remoteFileName = element.remoteFileName;
+            File localFile = element.localFile;
+            int restartAt = element.restartAt;
+            if (remoteFileName == null || localFile == null || restartAt < 0 || mTransferListener == null) {
+                Log.e(TAG, "run: not initialized: remoteFileName:" + remoteFileName + ", localFile:" + localFile + ", restartAt:" + restartAt + ", mTransferListener:" + mTransferListener);
+                return;
+            }
+            try {
+                if (restartAt > 0) {
+                    mClient.download(remoteFileName, localFile, restartAt, mTransferListener);
+                } else {
+                    mClient.download(remoteFileName, localFile, mTransferListener);
+                }
+            } catch (Throwable t) {
+                Log.e(TAG, "run: failed to download: " + localFile + " to: " + remoteFileName + " from: " + restartAt);
+                result = whatException(t);
+            }
+            if (mMessageCallback != null) {
+                mMessageCallback.sendReply(WHAT_DOWNLOAD, result);
+                mMessageCallback.sendReply(WHAT_DOWNLOAD_QUEUE, result, mDownloadQueue.size());
+            }
+        }
+    }
+
+    private final static class DownloadElement {
+        DownloadElement(String remoteFileName, File localFile, int restartAt) {
+            this.remoteFileName = remoteFileName;
+            this.localFile = localFile;
+            this.restartAt = restartAt;
+        }
+        String remoteFileName;
+        File localFile;
+        int restartAt;
+    }
+
+    private final class MessageCallback implements Handler.Callback {
+        @Override
+        public boolean handleMessage(Message msg) {
             switch (msg.what) {
                 case WHAT_START:
                     mRemoteMessenger = msg.replyTo;
                     sendReply(msg.what);
                     break;
+
                 case WHAT_STOP:
                     sendReply(msg.what);
                     mRemoteMessenger = null;
                     break;
+
                 case WHAT_CONNECT:
                     connect(msg);
                     break;
+
                 case WHAT_DISCONNECT:
                     disconnect(msg);
                     break;
+
                 case WHAT_LOGIN:
                     login(msg);
                     break;
+
                 case WHAT_LOGOUT:
                     logout(msg);
                     break;
+
                 case WHAT_CURRENT_DIRECTORY:
                     currentDirectory(msg);
                     break;
+
                 case WHAT_CHANGE_DIRECTORY:
                     changeDirectory(msg);
                     break;
+
                 case WHAT_CHANGE_DIRECTORY_UP:
                     changeDirectoryUp(msg);
                     break;
+
                 case WHAT_LIST:
                     list(msg);
                     break;
+
                 case WHAT_LIST_NAMES:
                     listNames(msg);
                     break;
+
                 case WHAT_DOWNLOAD:
                     download(msg);
                     break;
+
                 case WHAT_ABORT_CURRENT_DATA_TRANSFER:
                     abortCurrentDataTransfer(msg);
                     break;
+
                 default:
                     Log.w(TAG, "handleMessage: unknown message: " + msg.what);
                     break;
             }
-            msg.getData().clear();
+
+            return true;
         }
 
-        private String getString(Message msg, String key) {
+        private String getMessageString(Message msg, String key) {
             Bundle data = msg.getData();
             return data.getString(key);
         }
@@ -200,7 +305,7 @@ public class FTPService extends Service {
                 Log.w(TAG, "sendReply: no message handler");
                 return;
             }
-            Message returnMessage = obtainMessage();
+            Message returnMessage = mMessageHandler.obtainMessage();
             returnMessage.what = what;
             returnMessage.arg1 = arg1;
             returnMessage.arg2 = arg2;
@@ -214,37 +319,8 @@ public class FTPService extends Service {
             }
         }
 
-        private int whatException(Throwable t) {
-            int result = EXCEPTION_UNKNOWN;
-            if (t instanceof IllegalStateException) {
-                Log.w(TAG, "IllegalStateException");
-                result = EXCEPTION_ILLEGAL_STATE;
-            } else if (t instanceof IOException) {
-                Log.w(TAG, "IOException");
-                result = EXCEPTION_IO;
-            } else if (t instanceof FTPIllegalReplyException) {
-                Log.w(TAG, "FTPIllegalReplyException");
-                result = EXCEPTION_FTP_ILLEGAL_REPLY;
-            } else if (t instanceof FTPException) {
-                Log.w(TAG, "FTPException: " + ((FTPException)t).toString());
-                result = EXCEPTION_FTP;
-            } else if (t instanceof FTPDataTransferException) {
-                Log.w(TAG, "FTPDataTransferException");
-                result = EXCEPTION_FTP_DATA_TRANSFER;
-            } else if (t instanceof FTPAbortedException) {
-                Log.w(TAG, "FTPAbortedException");
-                result = EXCEPTION_FTP_ABORTED;
-            } else if (t instanceof FTPListParseException) {
-                Log.w(TAG, "FTPAbortedException");
-                result = EXCEPTION_FTP_LIST_PARSE;
-            } else {
-                Log.w(TAG, t.getMessage());
-            }
-            return result;
-        }
-
         private void connect(Message msg) {
-            String host = getString(msg, KEY_HOST);
+            String host = getMessageString(msg, KEY_HOST);
             if (host == null) {
                 host = "/";
             }
@@ -273,16 +349,16 @@ public class FTPService extends Service {
             } catch (Throwable t) {
                 Log.e(TAG, "disconnect: failed");
                 result = whatException(t);
-            }
+           }
             sendReply(msg.what, result);
         }
 
         private void login(Message msg) {
-            String username = getString(msg, KEY_USERNAME);
+            String username = getMessageString(msg, KEY_USERNAME);
             if (username == null) {
                 username = "anonymous";
             }
-            String password = getString(msg, KEY_PASSWORD);
+            String password = getMessageString(msg, KEY_PASSWORD);
             if (password == null) {
                 password = "";
             }
@@ -311,8 +387,7 @@ public class FTPService extends Service {
             Bundle data = new Bundle();
             int result = EXCEPTION_OK;
             try {
-                String path;
-                path = mClient.currentDirectory();
+                String path = mClient.currentDirectory();
                 data.putString(KEY_PATH, path);
             } catch (Throwable t) {
                 Log.e(TAG, "currentDirectory: failed");
@@ -322,7 +397,7 @@ public class FTPService extends Service {
         }
 
         private void changeDirectory(Message msg) {
-            String path = getString(msg, KEY_PATH);
+            String path = getMessageString(msg, KEY_PATH);
             if (path == null) {
                 path = "/";
             }
@@ -348,7 +423,7 @@ public class FTPService extends Service {
         }
 
         private void list(Message msg) {
-            String fileSpec = getString(msg, KEY_FILESPEC);
+            String fileSpec = getMessageString(msg, KEY_FILESPEC);
             Bundle data = new Bundle();
             int result = EXCEPTION_OK;
             try {
@@ -381,31 +456,21 @@ public class FTPService extends Service {
         }
 
         private void download(Message msg) {
-            final String remoteFileName = getString(msg, KEY_REMOTE_FILE_NAME);
-            final String localFileName = getString(msg, KEY_LOCAL_FILE_NAME);
-            if ((remoteFileName == null) || (localFileName == null)) {
+            final String remoteFileName = getMessageString(msg, KEY_REMOTE_FILE_NAME);
+            final String localFileName = getMessageString(msg, KEY_LOCAL_FILE_NAME);
+            final int restartAt = msg.arg1;
+            if (remoteFileName == null || localFileName == null || restartAt < 0) {
                 sendReply(msg.what, EXCEPTION_FILE_NOT_FOUND);
+                return;
             }
             final File localFile = new File(localFileName);
-            final int restartAt = msg.arg1;
-            Thread thread = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    int result = EXCEPTION_OK;
-                    try {
-                        if (restartAt > 0) {
-                            mClient.download(remoteFileName, localFile, restartAt, mTransferListener);
-                        } else {
-                            mClient.download(remoteFileName, localFile, mTransferListener);
-                        }
-                    } catch (Throwable t) {
-                        Log.e(TAG, "String: failed to download: " + localFile + " to: " + remoteFileName + " from: " + restartAt);
-                        result = whatException(t);
-                    }
-                    sendReply(WHAT_DOWNLOAD, result);
+            if (mDownloadHandler != null) {
+                mDownloadQueue.add(new DownloadElement(remoteFileName, localFile, restartAt));
+                if (mMessageCallback != null) {
+                    mMessageCallback.sendReply(WHAT_DOWNLOAD_QUEUE, EXCEPTION_OK, mDownloadQueue.size());
                 }
-            });
-            thread.start();
+                mDownloadHandler.post(mDownloadRunner);
+            }
         }
 
         private void abortCurrentDataTransfer(Message msg) {
@@ -420,43 +485,79 @@ public class FTPService extends Service {
         }
     }
 
-    @Override
-    public void onCreate() {
-        mThread = new HandlerThread("FTPHandler", Process.THREAD_PRIORITY_BACKGROUND);
-        mThread.start();
-        Looper looper = mThread.getLooper();
-        mReplyHandler = new FTPServiceHandler(looper);
-        mLocalMessenger = new Messenger(mReplyHandler);
-        mTransferListener = new FTPTransferListener();
-        mClient = new FTPClient();
+    private class FTPTransferListener implements FTPDataTransferListener {
+        @Override
+        public void started() {
+            Message msg = Message.obtain();
+            msg.what = WHAT_DOWNLOAD_STARTED;
+            if (mMessageCallback != null) {
+                mMessageCallback.sendReply(msg.what);
+            }
+        }
+
+        @Override
+        public void transferred(int length) {
+            Message msg = Message.obtain();
+            msg.what = WHAT_DOWNLOAD_TRANSFERRED;
+            if (mMessageCallback != null) {
+                mMessageCallback.sendReply(msg.what, EXCEPTION_OK, length);
+            }
+        }
+
+        @Override
+        public void completed() {
+            Message msg = Message.obtain();
+            msg.what = WHAT_DOWNLOAD_COMPLETED;
+            if (mMessageCallback != null) {
+                mMessageCallback.sendReply(msg.what);
+            }
+        }
+
+        @Override
+        public void aborted() {
+            Message msg = Message.obtain();
+            msg.what = WHAT_DOWNLOAD_ABORTED;
+            if (mMessageCallback != null) {
+                mMessageCallback.sendReply(msg.what);
+            }
+        }
+
+        @Override
+        public void failed() {
+            Message msg = Message.obtain();
+            msg.what = WHAT_DOWNLOAD_FAILED;
+            if (mMessageCallback != null) {
+                mMessageCallback.sendReply(msg.what);
+            }
+        }
     }
 
-    @Override
-    public void onDestroy() {
-        if (mThread != null) {
-            mThread.quit();
-            mThread = null;
+    private static int whatException(Throwable t) {
+        int result = EXCEPTION_UNKNOWN;
+        if (t instanceof IllegalStateException) {
+            Log.w(TAG, "IllegalStateException: " + t.getMessage());
+            result = EXCEPTION_ILLEGAL_STATE;
+        } else if (t instanceof IOException) {
+            Log.w(TAG, "IOException: " + t.getMessage());
+            result = EXCEPTION_IO;
+        } else if (t instanceof FTPIllegalReplyException) {
+            Log.w(TAG, "FTPIllegalReplyException: " + t.getMessage());
+            result = EXCEPTION_FTP_ILLEGAL_REPLY;
+        } else if (t instanceof FTPException) {
+            Log.w(TAG, "FTPException: " + ((FTPException)t).toString());
+            result = EXCEPTION_FTP;
+        } else if (t instanceof FTPDataTransferException) {
+            Log.w(TAG, "FTPDataTransferException: " + t.getMessage());
+            result = EXCEPTION_FTP_DATA_TRANSFER;
+        } else if (t instanceof FTPAbortedException) {
+            Log.w(TAG, "FTPAbortedException: " + t.getMessage());
+            result = EXCEPTION_FTP_ABORTED;
+        } else if (t instanceof FTPListParseException) {
+            Log.w(TAG, "FTPAbortedException: " + t.getMessage());
+            result = EXCEPTION_FTP_LIST_PARSE;
+        } else {
+            Log.w(TAG, "whatException: " + t.getMessage());
         }
-        if (mReplyHandler != null) {
-            mReplyHandler.removeCallbacksAndMessages(null);
-            mReplyHandler = null;
-        }
-        mLocalMessenger = null;
-        mTransferListener = null;
-        mClient = null;
-    }
-
-    @Override
-    public IBinder onBind(Intent intent) {
-        IBinder target = null;
-        if (mLocalMessenger != null) {
-            target = mLocalMessenger.getBinder();
-        }
-        return target;
-    }
-
-    @Override
-    public boolean onUnbind(Intent intent) {
-        return false;
+        return result;
     }
 }
