@@ -301,7 +301,7 @@ public class FTPService extends Service {
         }
 
         private void sendReply(int what, int arg1, int arg2, Bundle data) {
-            if (mRemoteMessenger == null) {
+            if (mMessageHandler == null || mRemoteMessenger == null) {
                 Log.w(TAG, "sendReply: no message handler");
                 return;
             }
