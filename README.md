@@ -22,7 +22,7 @@ FTP4jAnd is used in [AndPlug](https://play.google.com/store/apps/details?id=com.
 ## Prerequisites
 
 - [Android 4.0.3](https://developer.android.com/about/versions/android-4.0.3) (API Level: 15) or later (`ICE_CREAM_SANDWICH_MR1`)
-- [Android Gradle Plugin](https://developer.android.com/studio/releases/gradle-plugin) 7.0.1 or later (`gradle:7.0.1`)
+- [Android Gradle Plugin](https://developer.android.com/studio/releases/gradle-plugin) 7.2.2 or later (`gradle:7.2.2`)
 - [ftp4j](http://www.sauronsoftware.it/projects/ftp4j) Version 1.7.2
 
 ## Installation
@@ -185,7 +185,7 @@ class FTPCallback implements FTPController.IFTPCallback {
 
 ## Credits
 
-Copyright (C) 2019-2021 [Fredrik Claesson](https://github.com/omicronapps)
+Copyright (C) 2019-2023 [Fredrik Claesson](https://www.omicronapplications.com/)
 
 ## Release History
 
@@ -193,7 +193,8 @@ Copyright (C) 2019-2021 [Fredrik Claesson](https://github.com/omicronapps)
 - 1.1.0 Migrated to AndroidX
 - 1.2.0 FTP service refactored, support for multiple download requests
 - 1.3.0 Minor bugfix
+- 1.4.0 Change to Apache License Version 2.0
 
 ## License
 
-FTP4jAnd is licensed under [GNU LESSER GENERAL PUBLIC LICENSE](LICENSE).
+FTP4jAnd is licensed under [Apache License Version 2.0](LICENSE).

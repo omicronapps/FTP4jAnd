@@ -23,19 +23,19 @@ public class FTPControllerTest {
     // FTP Test site (https://dlptest.com/ftp-test/)
     private static final String TEST_HOST = "ftp.dlptest.com";
     private static final int TEST_PORT = 21;
-    private static final String TEST_REPLY = "#########################################################";
+    private static final String TEST_REPLY = "Welcome to the DLP Test FTP Server";
 
-    // UCONN FTP Test site (http://ftp.uconn.edu/pcsecurity/windows/)
-    private static final String TEST_ANONYMOUS_HOST = "ftp.uconn.edu";
+    // Rebex FTP Test site (https://test.rebex.net/)
+    private static final String TEST_ANONYMOUS_HOST = "test.rebex.net";
     private static final int TEST_ANONYMOUS_PORT = 21;
     private static final String TEST_ANONYMOUS_USERNAME = "anonymous";
     private static final String TEST_ANONYMOUS_PASSWORD = "";
-    private static final String TEST_ANONYMOUS_FOLDER = "pcsecurity";
-    private static final String TEST_ANONYMOUS_SUBFOLDER = "windows";
-    private static final String TEST_ANONYMOUS_REPLY = "ProFTPD 1.2.10 Server (ftp.uconn.edu) [137.99.26.52]";
+    private static final String TEST_ANONYMOUS_FOLDER = "pub";
+    private static final String TEST_ANONYMOUS_SUBFOLDER = "example";
+    private static final String TEST_ANONYMOUS_REPLY = "Rebex FTP Server ready.";
 
     private static final String TEST_ROOT = "/";
-    private static final String TEST_REMOTE = "LICENSE.txt";
+    private static final String TEST_REMOTE = "readme.txt";
 
     private FTPController mController;
     private TestCallback mCallback;
@@ -384,12 +384,10 @@ public class FTPControllerTest {
         login();
 
         FTPFile[] files = list(TEST_ROOT);
-        assertEquals(files[0].getName(), "48_hour");
-        assertEquals(files[1].getName(), "huskypc");
-        assertEquals(files[2].getName(), "pcsecurity");
-        assertEquals(files[3].getName(), "restricted");
+        assertEquals(files[0].getName(), "pub");
+        assertEquals(files[1].getName(), "readme.txt");
         for (FTPFile file : files) {
-            Log.d("FTPControllerTest", file.getLink() + ", " + file.getName() + ", " + file.getModifiedDate() + ", " + file.getSize() + ", " + file.getType());
+            Log.i("FTPControllerTest", file.getLink() + ", " + file.getName() + ", " + file.getModifiedDate() + ", " + file.getSize() + ", " + file.getType());
         }
 
         // Default filespec
@@ -406,13 +404,17 @@ public class FTPControllerTest {
         connect(TEST_ANONYMOUS_HOST, TEST_ANONYMOUS_PORT, TEST_ANONYMOUS_REPLY);
         login();
 
+        // Change directory
+        changeDirectory(TEST_ANONYMOUS_FOLDER);
+        changeDirectory(TEST_ANONYMOUS_SUBFOLDER);
+
         String[] names = listNames();
-        assertEquals(names[0], "pcsecurity");
-        assertEquals(names[1], "restricted");
-        assertEquals(names[2], "48_hour");
-        assertEquals(names[3], "huskypc");
+        assertEquals(names[0], "imap-console-client.png");
+        assertEquals(names[1], "KeyGenerator.png");
+        assertEquals(names[2], "KeyGeneratorSmall.png");
+        assertEquals(names[3], "mail-editor.png");
         for (String name : names) {
-            Log.d("FTPControllerTest", name);
+            Log.i("FTPControllerTest", name);
         }
 
         logout();
